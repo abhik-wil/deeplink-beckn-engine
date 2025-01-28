@@ -2,7 +2,8 @@
   "name": "@ondc/deeplink-beckn-engine",
   "version": "1.0.0",
   "description": "Deeplink Processor Library",
-  "main": "index.js",
+  "main": "dist/src/index.js",
+  "types": "dist/types/src/index.d.ts",
   "scripts": {
     "test": "jest",
     "lint": "gts lint",

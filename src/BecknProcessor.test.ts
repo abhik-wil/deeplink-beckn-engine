@@ -1,7 +1,7 @@
-import {BecknProcessor} from '../BecknProcessor';
+import {BecknProcessor} from './BecknProcessor';
 import * as fs from 'fs';
 import axios from 'axios';
-import {JsonSchemaObject} from '../BecknProcessor';
+import {JsonSchemaObject} from './BecknProcessor';
 
 jest.mock('fs');
 jest.mock('axios');
