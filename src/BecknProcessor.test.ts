@@ -6,26 +6,39 @@ import {JsonSchemaObject} from './BecknProcessor';
 jest.mock('fs');
 jest.mock('axios');
 
-describe('BecknProcessor Unit Tests', () => {
+describe('BecknProcessor Tests', () => {
   const mockSchema: JsonSchemaObject = {
     type: 'object',
     properties: {
-      name: {type: 'string', const: 'test'},
-      age: {type: 'number'},
-      address: {
+      context: {
         type: 'object',
         properties: {
-          street: {type: 'string'},
-          city: {type: 'string'},
+          domain: {type: 'string', const: 'mobility'},
+          version: {type: 'string'},
+          location: {
+            type: 'object',
+            properties: {
+              city: {type: 'string'},
+              country: {type: 'string'},
+            },
+          },
+        },
+      },
+      message: {
+        type: 'object',
+        properties: {
+          intent: {type: 'string'},
+          dynamic_value: {type: 'string'},
         },
       },
     },
   };
 
   const mockYamlContent = `
-    age: 25
-    address.street: "123 Main St"
-    address.city: "Test City"
+    context.version: "1.0.0"
+    context.location.city: "Bangalore"
+    context.location.country: "India"
+    message.intent: "search"
   `;
 
   beforeEach(() => {
@@ -36,137 +49,102 @@ describe('BecknProcessor Unit Tests', () => {
     jest.clearAllMocks();
   });
 
-  test('constructor initializes properly', () => {
-    const processor = new BecknProcessor('mock.yaml', mockSchema);
-    expect(processor).toBeDefined();
-  });
+  // Unit Tests
+  describe('Unit Tests', () => {
+    test('constructor should initialize with valid schema and yaml path', () => {
+      const processor = new BecknProcessor('mock.yaml', mockSchema);
+      expect(processor).toBeDefined();
+    });
 
-  test('staticResolve processes schema and yaml values correctly', async () => {
-    const processor = new BecknProcessor('mock.yaml', mockSchema);
-    await processor.staticResolve();
-    const result = processor.getParsedUsecase();
+    test('getParsedUsecase should throw error for invalid schema', () => {
+      const invalidSchema: JsonSchemaObject = {
+        type: 'object',
+        properties: {
+          required_field: {type: 'string'},
+        },
+        required: ['required_field'],
+      };
 
-    expect(result).toEqual({
-      name: 'test',
-      age: 25,
-      address: {
-        street: '123 Main St',
-        city: 'Test City',
-      },
+      const processor = new BecknProcessor('mock.yaml', invalidSchema);
+      expect(() => processor.getParsedUsecase()).toThrow(
+        'Invalid Data in Schema',
+      );
+    });
+
+    test('staticResolve should process const values correctly', async () => {
+      const processor = new BecknProcessor('mock.yaml', mockSchema);
+      await processor.staticResolve();
+      const result = processor.getParsedUsecase();
+      expect(result.context.domain).toBe('mobility');
     });
   });
 
-  test('dynamicResolve with string resolver (API URL)', async () => {
-    const processor = new BecknProcessor('mock.yaml', mockSchema);
-    await processor.staticResolve();
+  // Integration Tests
+  describe('Integration Tests', () => {
+    test('full workflow with static and dynamic resolvers', async () => {
+      const processor = new BecknProcessor('mock.yaml', mockSchema);
 
-    (axios.get as jest.Mock).mockResolvedValue({data: 'Dynamic Value'});
+      // Static resolution
+      await processor.staticResolve();
 
-    processor.addDynamicResolver(
-      'address.street',
-      'http://api.example.com/street',
-    );
-    const result = await processor.dynamicResolve();
+      // Add dynamic resolvers
+      const mockApiResponse = 'dynamic api value';
+      (axios.get as jest.Mock).mockResolvedValue({data: mockApiResponse});
 
-    expect(result.address.street).toBe('Dynamic Value');
-    expect(axios.get).toHaveBeenCalledWith('http://api.example.com/street');
-  });
+      processor.addDynamicResolver(
+        'message.dynamic_value',
+        'http://api.example.com/value',
+      );
 
-  test('dynamicResolve with function resolver', async () => {
-    const processor = new BecknProcessor('mock.yaml', mockSchema);
-    await processor.staticResolve();
+      // Dynamic resolution
+      await processor.dynamicResolve();
 
-    const mockResolver = jest.fn().mockResolvedValue('Dynamic Function Value');
-    processor.addDynamicResolver('address.city', mockResolver);
+      const finalResult = processor.getParsedUsecase();
 
-    const result = await processor.dynamicResolve();
-    expect(result.address.city).toBe('Dynamic Function Value');
-    expect(mockResolver).toHaveBeenCalled();
-  });
-
-  test('throws error for invalid schema', () => {
-    const invalidSchema: JsonSchemaObject = {
-      type: 'object',
-      properties: {
-        name: {type: 'number', const: 'invalid'}, // Type mismatch
-      },
-    };
-
-    expect(() => {
-      new BecknProcessor('mock.yaml', invalidSchema);
-    }).toThrow();
-  });
-});
-
-describe('BecknProcessor Integration Tests', () => {
-  const realSchema: JsonSchemaObject = {
-    type: 'object',
-    properties: {
-      context: {
-        type: 'object',
-        properties: {
-          domain: {type: 'string', const: 'mobility'},
-          action: {type: 'string'},
-          timestamp: {type: 'string'},
-        },
-      },
-      message: {
-        type: 'object',
-        properties: {
-          order: {
-            type: 'object',
-            properties: {
-              id: {type: 'string'},
-              status: {type: 'string'},
-            },
+      expect(finalResult).toEqual({
+        context: {
+          domain: 'mobility',
+          version: '1.0.0',
+          location: {
+            city: 'Bangalore',
+            country: 'India',
           },
         },
-      },
-    },
-  };
-
-  test('complete flow with static and dynamic resolvers', async () => {
-    // Create actual YAML file for testing
-    const yamlContent = `
-      context.action: search
-      message.order.status: pending
-    `;
-
-    fs.writeFileSync('test.yaml', yamlContent);
-
-    const processor = new BecknProcessor('test.yaml', realSchema);
-
-    // Static resolve
-    await processor.staticResolve();
-
-    // Add dynamic resolvers
-    processor.addDynamicResolver('message.order.id', async () => 'ORD001');
-    processor.addDynamicResolver(
-      'context.timestamp',
-      'http://timeapi.example.com',
-    );
-
-    // Mock API response
-    (axios.get as jest.Mock).mockResolvedValue({data: '2023-01-01T00:00:00Z'});
-
-    // Dynamic resolve
-    const finalResult = await processor.dynamicResolve();
-
-    expect(finalResult).toEqual({
-      context: {
-        domain: 'mobility',
-        action: 'search',
-        timestamp: '2023-01-01T00:00:00Z',
-      },
-      message: {
-        order: {
-          id: 'ORD001',
-          status: 'pending',
+        message: {
+          intent: 'search',
+          dynamic_value: mockApiResponse,
         },
-      },
+      });
     });
 
-    // Cleanup
-    fs.unlinkSync('test.yaml');
+    test('multiple dynamic resolvers with function and API URL', async () => {
+      const processor = new BecknProcessor('mock.yaml', mockSchema);
+      await processor.staticResolve();
+
+      const functionResolver = async () => 'function resolved value';
+      (axios.get as jest.Mock).mockResolvedValue({data: 'api resolved value'});
+
+      processor.addDynamicResolver('message.dynamic_value', functionResolver);
+      processor.addDynamicResolver(
+        'context.location.city',
+        'http://api.example.com/city',
+      );
+
+      await processor.dynamicResolve();
+      const result = processor.getParsedUsecase();
+
+      expect(result.message.dynamic_value).toBe('function resolved value');
+      expect(result.context.location.city).toBe('api resolved value');
+    });
+
+    test('error handling for invalid YAML file', () => {
+      (fs.readFileSync as jest.Mock).mockImplementation(() => {
+        throw new Error('File not found');
+      });
+
+      expect(() => new BecknProcessor('invalid.yaml', mockSchema)).toThrow(
+        'Error loading YAML file',
+      );
+    });
   });
 });
