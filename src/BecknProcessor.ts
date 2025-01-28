@@ -2,6 +2,8 @@ import * as yaml from 'js-yaml';
 import * as fs from 'fs';
 import axios from 'axios';
 
+import Ajv, {ValidateFunction} from 'ajv';
+
 export type JsonSchemaObject = {
   $schema?: string;
   $id?: string;
@@ -33,15 +35,24 @@ export class BecknProcessor {
   private staticData: Record<string, any>;
   private parsedUsecase: Record<string, any> = {};
   private dynamicResolvers: DynamicResolver[] = [];
+  private schemaValidator: ValidateFunction;
 
   constructor(
     staticValuePath: string,
     private usecaseSchema: JsonSchemaObject,
   ) {
+    const ajv = new Ajv();
+    this.schemaValidator = ajv.compile(usecaseSchema);
     this.staticData = this.loadYamlFile(staticValuePath);
   }
 
   public getParsedUsecase() {
+    const valid = this.schemaValidator(this.parsedUsecase);
+    if (!valid) {
+      throw new Error('Invalid Data in Schema', {
+        cause: this.schemaValidator.errors,
+      });
+    }
     return this.parsedUsecase;
   }
 
@@ -86,6 +97,7 @@ export class BecknProcessor {
       }),
     };
   }
+
   private applyYamlValues() {
     const result = {...this.parsedUsecase};
 
@@ -111,7 +123,14 @@ export class BecknProcessor {
 
   public async staticResolve() {
     this.parsedUsecase = this.processSchemaWithConst(this.usecaseSchema);
-    this.parsedUsecase = this.applyYamlValues();
+    const temp = this.applyYamlValues();
+    const valid = this.schemaValidator(temp);
+    if (!valid) {
+      throw new Error('Invalid Data in Schema', {
+        cause: this.schemaValidator.errors,
+      });
+    }
+    this.parsedUsecase = temp;
   }
 
   public addDynamicResolver(
@@ -120,6 +139,7 @@ export class BecknProcessor {
   ) {
     this.dynamicResolvers.push({path, resolver});
   }
+
   public async dynamicResolve(): Promise<Record<string, any>> {
     const resolvedTemplate = {...this.parsedUsecase};
 
@@ -146,6 +166,12 @@ export class BecknProcessor {
       current[pathParts[pathParts.length - 1]] = value;
     }
 
+    const valid = this.schemaValidator(resolvedTemplate);
+    if (!valid) {
+      throw new Error('Invalid Data in Schema', {
+        cause: this.schemaValidator.errors,
+      });
+    }
     return resolvedTemplate;
   }
 }
