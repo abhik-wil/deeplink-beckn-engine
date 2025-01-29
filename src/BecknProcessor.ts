@@ -1,6 +1,7 @@
 import * as yaml from 'js-yaml';
 import * as fs from 'fs';
 import axios from 'axios';
+import * as path from 'path';
 
 import Ajv, {ValidateFunction} from 'ajv';
 
@@ -42,15 +43,23 @@ export class BecknProcessor {
     private usecaseSchema: JsonSchemaObject,
   ) {
     const ajv = new Ajv();
-    this.schemaValidator = ajv.compile(usecaseSchema);
-    this.staticData = this.loadYamlFile(staticValuePath);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const {$schema, ...schema} = usecaseSchema;
+    this.schemaValidator = ajv.compile(schema);
+    const absolutePath = path.isAbsolute(staticValuePath)
+      ? staticValuePath
+      : path.resolve(process.cwd(), staticValuePath);
+    this.staticData = this.loadYamlFile(absolutePath);
   }
 
   public getParsedUsecase() {
     const valid = this.schemaValidator(this.parsedUsecase);
     if (!valid) {
       throw new Error('Invalid Data in Schema', {
-        cause: this.schemaValidator.errors,
+        cause: {
+          validationErrors: this.schemaValidator.errors,
+          currentParsedData: this.parsedUsecase,
+        },
       });
     }
     return this.parsedUsecase;
@@ -124,12 +133,6 @@ export class BecknProcessor {
   public async staticResolve() {
     this.parsedUsecase = this.processSchemaWithConst(this.usecaseSchema);
     const temp = this.applyYamlValues();
-    const valid = this.schemaValidator(temp);
-    if (!valid) {
-      throw new Error('Invalid Data in Schema', {
-        cause: this.schemaValidator.errors,
-      });
-    }
     this.parsedUsecase = temp;
   }
 
@@ -140,7 +143,7 @@ export class BecknProcessor {
     this.dynamicResolvers.push({path, resolver});
   }
 
-  public async dynamicResolve(): Promise<Record<string, any>> {
+  public async dynamicResolve() {
     const resolvedTemplate = {...this.parsedUsecase};
 
     for (const {path, resolver} of this.dynamicResolvers) {
@@ -166,12 +169,6 @@ export class BecknProcessor {
       current[pathParts[pathParts.length - 1]] = value;
     }
 
-    const valid = this.schemaValidator(resolvedTemplate);
-    if (!valid) {
-      throw new Error('Invalid Data in Schema', {
-        cause: this.schemaValidator.errors,
-      });
-    }
-    return resolvedTemplate;
+    this.parsedUsecase = resolvedTemplate;
   }
 }
