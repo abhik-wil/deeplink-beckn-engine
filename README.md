@@ -15,7 +15,7 @@ A TypeScript class that processes Beckn protocol schemas with static and dynamic
 ### Installation
 
 ```bash
-npm install deeplink-beckn-engine
+npm install @ondc/deeplink-beckn-engine
 ```
 ### Usage
 
